@@ -112,7 +112,7 @@ def get_input_path():
 
         else:
             print(f"   ❌ Invalid path. Could not find:")
-            print(f"      - conversations.json in folder, or")
+            print(f"      - conversations.json or conversations-*.json in folder, or")
             print(f"      - valid ZIP file")
             print(f"   Please try again.")
 
@@ -180,6 +180,7 @@ def run_setup():
     config['include_date'] = True
     config['message_separator'] = '\n\n'
     config['skip_empty_messages'] = True
+    config['extract_assets'] = True
 
     # Save config
     config_path = Path('config.json')

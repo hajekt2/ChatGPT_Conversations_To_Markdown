@@ -111,6 +111,17 @@ python chatgpt_json_to_markdown.py
 
 3. **Done!** Open your `MarkdownFiles` folder
 
+### Optional config flags
+
+In `config.json`:
+
+- `extract_assets` (default: `true`)
+  - `true`: copy/embed images and audio
+  - `false`: skip asset extraction and remove asset links/references from markdown
+
+- `file_name_format` (default: `{title}`)
+  - Uses the normalized conversation title, keeping filenames and first `#` header aligned
+
 ## 📥 Getting Your ChatGPT Data
 
 1. Go to [ChatGPT Settings](https://chatgpt.com/settings) → **Data Controls**
@@ -124,10 +135,10 @@ python chatgpt_json_to_markdown.py
 Both methods will:
 - ✅ Process all your conversations (could be 100s!)
 - ✅ Organize by your chosen mode (flat/category/date/hybrid)
-- ✅ Copy and organize all images → `Assets/Images/`
-- ✅ Copy and embed all audio → `Assets/Audio/`
-- ✅ Separate DALL-E images → `Assets/DALLE/`
-- ✅ Create markdown files with embedded media
+- ✅ Copy and organize all images → `Assets/Images/` (optional)
+- ✅ Copy and embed all audio → `Assets/Audio/` (optional)
+- ✅ Separate DALL-E images → `Assets/DALLE/` (optional)
+- ✅ Create markdown files with embedded media (or text-only mode)
 - ✅ Generate Obsidian-compatible frontmatter
 - ✅ Show progress during processing
 
@@ -167,7 +178,6 @@ MarkdownFiles/
 
 ```markdown
 ---
-title: "My Conversation About React"
 created: 2025-01-15 14:30:00
 updated: 2025-01-15 16:45:00
 tags:

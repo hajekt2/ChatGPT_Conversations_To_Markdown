@@ -106,6 +106,37 @@ def copy_attachment(src_path, output_base, file_type, filename, config, conversa
     rel_path = get_relative_asset_path(conversation_path, target_path)
     return rel_path
 
+def _strip_asset_references(text):
+    """
+    Remove markdown/html references to local/exported assets.
+    Used when extract_assets is disabled.
+    """
+    if not text:
+        return text
+
+    # Remove markdown image embeds
+    text = re.sub(r'!\[[^\]]*\]\([^\)]*\)', '', text)
+
+    # Remove HTML5 audio/video embeds
+    text = re.sub(r'<audio[^>]*>.*?</audio>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<video[^>]*>.*?</video>', '', text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Remove markdown links that point to assets
+    asset_link_pattern = (
+        r'\[[^\]]*\]\('
+        r'(?:[^\)]*\.(?:png|jpg|jpeg|gif|webp|bmp|svg|wav|mp3|m4a|ogg|mp4|webm)'
+        r'|file-service://[^\)]+'
+        r'|sediment://[^\)]+'
+        r'|sandbox:/mnt/data/[^\)]+)'
+        r'\)'
+    )
+    text = re.sub(asset_link_pattern, '', text, flags=re.IGNORECASE)
+
+    # Clean excessive empty lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 def _process_message_parts(parts, input_base_path, output_base, config, conversation_path):
     """
     Process message parts, handling both text and image_asset_pointer types.
@@ -114,17 +145,21 @@ def _process_message_parts(parts, input_base_path, output_base, config, conversa
     if not parts:
         return "", []
 
+    extract_assets = config.get('extract_assets', True)
     content_pieces = []
     attachments = []
 
     for part in parts:
         if isinstance(part, str):
             # Regular text content
-            content_pieces.append(part)
+            content_pieces.append(_strip_asset_references(part) if not extract_assets else part)
         elif isinstance(part, dict):
             content_type = part.get('content_type', '')
 
             if content_type == 'image_asset_pointer':
+                if not extract_assets:
+                    continue
+
                 # Image attachment
                 asset_pointer = part.get('asset_pointer', '')
                 file_id = extract_file_id(asset_pointer)
@@ -140,6 +175,9 @@ def _process_message_parts(parts, input_base_path, output_base, config, conversa
                             content_pieces.append(f"![Image]({rel_path})")
 
             elif content_type in ['audio_asset_pointer', 'real_time_user_audio_video_asset_pointer']:
+                if not extract_assets:
+                    continue
+
                 # Audio/Video content - try to embed audio file
                 asset_pointer = None
                 duration = None
@@ -177,7 +215,8 @@ def _process_message_parts(parts, input_base_path, output_base, config, conversa
 
             elif 'text' in part:
                 # Text content in dict format
-                content_pieces.append(part['text'])
+                text_value = part['text']
+                content_pieces.append(_strip_asset_references(text_value) if not extract_assets else text_value)
             else:
                 # Unknown dict format - skip to avoid cluttering output
                 # (previously this would dump the entire dict as a string)
@@ -198,6 +237,7 @@ def _get_message_content(message, input_base_path, output_base, config, conversa
     """
     content_obj = message.get("content", {})
     content_type = content_obj.get("content_type", "unknown")
+    extract_assets = config.get('extract_assets', True)
 
     if "parts" in content_obj:
         parts = content_obj["parts"]
@@ -242,15 +282,18 @@ def _get_message_content(message, input_base_path, output_base, config, conversa
         return f"```\n{code_text}\n```", []
 
     elif "text" in content_obj:
-        return content_obj["text"], []
+        text_value = content_obj["text"]
+        return (_strip_asset_references(text_value) if not extract_assets else text_value), []
 
     elif "result" in content_obj:
-        return content_obj["result"], []
+        result_value = content_obj["result"]
+        return (_strip_asset_references(result_value) if not extract_assets else result_value), []
 
     else:
         # Unknown format, try to extract something useful
         if isinstance(content_obj, dict):
-            return str(content_obj.get('content', '')), []
+            raw_content = str(content_obj.get('content', ''))
+            return (_strip_asset_references(raw_content) if not extract_assets else raw_content), []
         return "", []
 
 def _get_author_name(message, config):
@@ -287,17 +330,18 @@ def _get_author_name(message, config):
 
     return base_name
 
-def _get_title(title, first_message):
+def _normalize_title(title):
     """
-    Return conversation['title'] if it exists, otherwise infer it from the first message
+    Normalize title for display/filename sync.
     """
-    if title:
-        return title
+    if not title:
+        return "Untitled Conversation"
 
-    # If there is no title, use a default
-    return "Untitled Conversation"
+    normalized = str(title).replace('_', ' ')
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized or "Untitled Conversation"
 
-def generate_frontmatter(title, create_time, update_time, config):
+def generate_frontmatter(create_time, update_time, config):
     """
     Generate YAML frontmatter for Obsidian.
     """
@@ -305,7 +349,6 @@ def generate_frontmatter(title, create_time, update_time, config):
         return ""
 
     lines = ["---"]
-    lines.append(f"title: \"{title}\"")
 
     if create_time:
         created = datetime.fromtimestamp(create_time).strftime("%Y-%m-%d %H:%M:%S")
@@ -322,6 +365,35 @@ def generate_frontmatter(title, create_time, update_time, config):
     lines.append("")
 
     return "\n".join(lines)
+
+def _load_conversation_data(input_dir):
+    """
+    Load conversation data from either:
+    - legacy conversations.json
+    - new sharded conversations-*.json files
+    """
+    input_dir = Path(input_dir)
+
+    legacy = input_dir / 'conversations.json'
+    if legacy.exists():
+        data = read_json_file(legacy)
+        if isinstance(data, list):
+            return data
+        return [data]
+
+    shard_files = sorted(input_dir.glob('conversations-*.json'))
+    if shard_files:
+        combined = []
+        for shard in shard_files:
+            shard_data = read_json_file(shard)
+            if isinstance(shard_data, list):
+                combined.extend(shard_data)
+            elif isinstance(shard_data, dict):
+                combined.append(shard_data)
+        return combined
+
+    return None
+
 
 def process_conversations(data, output_dir, config, input_base_path):
     """
@@ -358,27 +430,27 @@ def process_conversations(data, output_dir, config, input_base_path):
         # Sort messages by their create_time, handling None values
         messages.sort(key=lambda x: x.get("create_time") or float('-inf'))
 
-        # Use the first message to infer the title if it's not available
-        inferred_title = _get_title(title, messages[0] if messages else None)
+        # Use conversation title and normalize for display/filename sync
+        inferred_title = _normalize_title(title)
 
         # Sanitize the title to ensure it's a valid filename
-        sanitized_title = ''.join(c for c in inferred_title if c.isalnum() or c in [' ', '_', '-']).rstrip()
+        sanitized_title = ''.join(c for c in inferred_title if c.isalnum() or c in [' ', '-']).rstrip()
         if not sanitized_title:
-            sanitized_title = f"conversation_{int(create_time or 0)}"
+            sanitized_title = f"conversation {int(create_time or 0)}"
 
         # Get organized path for this conversation
         conversation_dir = get_conversation_path(entry, config, output_base)
         conversation_dir.mkdir(parents=True, exist_ok=True)
 
         # Create filename
-        file_name = f"{config['file_name_format'].format(title=sanitized_title.replace(' ', '_').replace('/', '_'))}.md"
+        file_name = f"{config['file_name_format'].format(title=sanitized_title.replace('/', '-'))}.md"
         file_path = conversation_dir / file_name
 
         # Write messages to file
         with open(file_path, "w", encoding="utf-8") as f:
             # Write frontmatter
             if config.get('use_frontmatter', True):
-                frontmatter = generate_frontmatter(inferred_title, create_time, update_time, config)
+                frontmatter = generate_frontmatter(create_time, update_time, config)
                 f.write(frontmatter)
 
             # Write title
@@ -430,13 +502,13 @@ def main():
     # Determine the base path for finding attachments
     if config['input_mode'] == 'directory':
         input_base_path = input_path
-        conversations_file = input_path / 'conversations.json'
+        data = _load_conversation_data(input_path)
 
-        if conversations_file.exists():
-            data = read_json_file(conversations_file)
+        if data is not None:
             process_conversations(data, str(output_dir), config, str(input_base_path))
         else:
-            print(f"❌ Error: conversations.json not found in {input_path}")
+            print(f"❌ Error: no conversation files found in {input_path}")
+            print("   Expected conversations.json or conversations-*.json")
             sys.exit(1)
     else:
         # Single file mode - assume input_path is the conversations.json
@@ -445,7 +517,10 @@ def main():
         process_conversations(data, str(output_dir), config, str(input_base_path))
 
     print(f"\n✅ All Done! You can access your files here: {output_dir}")
-    print(f"📁 Created markdown files with embedded images and audio.")
+    if config.get('extract_assets', True):
+        print(f"📁 Created markdown files with embedded images and audio.")
+    else:
+        print(f"📄 Created markdown files without extracting or linking assets.")
     print(f"🗂️  Organization mode: {config.get('organization_mode', 'flat').upper()}")
 
 if __name__ == "__main__":

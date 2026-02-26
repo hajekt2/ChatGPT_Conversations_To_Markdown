@@ -10,5 +10,6 @@
   "message_separator": "\n\n",
   "skip_empty_messages": true,
   "use_frontmatter": true,
-  "use_obsidian_callouts": true
+  "use_obsidian_callouts": true,
+  "extract_assets": true
 }
