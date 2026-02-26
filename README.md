@@ -130,6 +130,8 @@ In `config.json`:
 4. Download the ZIP file from the email
 5. **Keep the ZIP file** - no need to extract! The setup wizard will handle it.
 
+> ℹ️ Export format note: OpenAI now often ships sharded exports (`conversations-001.json`, `conversations-002.json`, ...). This tool supports both the new sharded format and legacy `conversations.json`.
+
 ### What Happens During Conversion
 
 Both methods will:
@@ -229,6 +231,13 @@ Sure! I can hear your question about useState...
 - Make sure you extracted **ALL files** from the ChatGPT export ZIP
 - Verify that `file-*` files and folders are in the `JsonFiles` directory
 - Check that paths in `config.json` are absolute paths (e.g., `C:\Users\...` on Windows)
+
+### ZIP Extraction Error: `conversations.json not found`
+- This was caused by OpenAI export format changes (sharded files like `conversations-001.json`)
+- The converter now detects both formats automatically:
+  - Legacy: `conversations.json`
+  - New: `conversations-*.json`
+- If you still see this error, verify the ZIP is a real ChatGPT data export (not a partial or wrong archive)
 
 ### Path Errors on Windows
 - Use double backslashes in paths: `C:\\Users\\...`

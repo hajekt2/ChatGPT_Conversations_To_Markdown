@@ -13,3 +13,5 @@
 - YAML frontmatter no longer writes the `title` property.
 - Setup wizard now writes `extract_assets: true` by default.
 - `config.json.example` includes `extract_assets`.
+- ZIP extraction now supports both legacy `conversations.json` and new sharded `conversations-*.json` exports.
+- Improved extraction-time error text when no conversation JSON files are found.

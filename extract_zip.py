@@ -3,6 +3,20 @@ import os
 import shutil
 from pathlib import Path
 
+def _find_conversation_jsons(base_dir):
+    """Find conversation JSON files in old and new ChatGPT export formats."""
+    base_dir = Path(base_dir)
+
+    # Newest export format: sharded files (conversations-001.json, ...)
+    shards = sorted(base_dir.rglob("conversations-*.json"))
+    if shards:
+        return shards
+
+    # Legacy export format: single conversations.json
+    legacy = list(base_dir.rglob("conversations.json"))
+    return legacy
+
+
 def extract_chatgpt_zip(zip_path, extract_to=None):
     """
     Extract ChatGPT export ZIP file.
@@ -12,7 +26,7 @@ def extract_chatgpt_zip(zip_path, extract_to=None):
         extract_to: Where to extract (defaults to temp folder)
 
     Returns:
-        Path to extracted conversations.json directory
+        Path to extracted ChatGPT export directory
     """
     zip_path = Path(zip_path)
 
@@ -39,24 +53,24 @@ def extract_chatgpt_zip(zip_path, extract_to=None):
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to)
 
-    # Find conversations.json
-    conversations_file = extract_to / "conversations.json"
+    # Find conversation data files (legacy single-file OR new sharded format)
+    conversation_files = _find_conversation_jsons(extract_to)
 
-    if not conversations_file.exists():
-        # Maybe it's in a subdirectory
-        for json_file in extract_to.rglob("conversations.json"):
-            conversations_file = json_file
-            extract_to = json_file.parent
-            break
-
-    if not conversations_file.exists():
+    if not conversation_files:
         raise FileNotFoundError(
-            f"conversations.json not found in ZIP. "
-            f"Make sure you exported the correct ChatGPT data."
+            "No conversation JSON files found in ZIP. "
+            "Expected conversations.json or conversations-*.json. "
+            "Make sure you exported the correct ChatGPT data."
         )
 
+    # Use the parent dir of first conversation file as input directory
+    extract_to = conversation_files[0].parent
+
     print(f"✅ Extracted successfully!")
-    print(f"   Found conversations.json at: {extract_to}")
+    if any(p.name.startswith("conversations-") for p in conversation_files):
+        print(f"   Found {len(conversation_files)} sharded conversation files at: {extract_to}")
+    else:
+        print(f"   Found conversations.json at: {extract_to}")
 
     return extract_to
 
@@ -73,9 +87,12 @@ def is_zip_file(path):
     return path.exists() and zipfile.is_zipfile(path)
 
 def is_extracted_directory(path):
-    """Check if path is an already-extracted ChatGPT export directory"""
+    """Check if path is an already-extracted ChatGPT export directory."""
     path = Path(path)
-    return path.exists() and (path / "conversations.json").exists()
+    if not path.exists() or not path.is_dir():
+        return False
+
+    return bool(_find_conversation_jsons(path))
 
 if __name__ == "__main__":
     import sys
